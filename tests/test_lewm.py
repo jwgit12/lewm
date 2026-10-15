@@ -1,6 +1,8 @@
 import torch
 
-from lewm import LeWM, LeWMConfig, LeWMLoss
+import torch.nn.functional as F
+
+from lewm import LeWM, LeWMConfig, LeWMLoss, VisualProbe
 
 
 def tiny_model():
@@ -38,3 +40,18 @@ def test_rollout():
     with torch.no_grad():
         out = model.rollout(torch.randn(2, 3, 3, 32, 32), torch.randn(2, 7, 4))
     assert out.shape == (2, 8, 192)
+
+
+def test_visual_probe():
+    model = tiny_model()
+    probe = VisualProbe(in_dim=192, img_size=32, patch_size=8, dim=64, depth=2, heads=4, mlp_dim=128)
+    pixels = torch.randn(2, 3, 3, 32, 32)
+
+    cls = model.encoder(pixels.flatten(0, 1)).detach()  # (6, 192) CLS tokens, no gradient into LeWM
+    recon = probe(cls)
+    assert recon.shape == (6, 3, 32, 32)
+    assert probe(cls.view(2, 3, -1)).shape == (2, 3, 3, 32, 32)
+
+    F.mse_loss(recon, pixels.flatten(0, 1)).backward()
+    assert all(p.grad is not None for p in probe.parameters())
+    assert all(p.grad is None for p in model.parameters())
